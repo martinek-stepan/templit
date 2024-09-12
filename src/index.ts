@@ -1,8 +1,13 @@
 import { createInterface } from 'node:readline';
 import { addRemote, getRemotes, getStatus, fetchAndMergeBranch } from './git';
+import { replaceTokens } from './templating';
 
 type State = {
   globalVariables: Record<string, string>;
+};
+
+const state: State = {
+  globalVariables: {},
 };
 
 const rl = createInterface({
@@ -50,5 +55,25 @@ try {
   console.log(error.message);
   await question('Press any key to continue...');
 }
+
+console.log('Template successfully merged!');
+
+const tokens = await replaceTokens(state.globalVariables, true);
+
+const map: Record<string, string> = {};
+
+console.log('Please enter values for missing tokens:');
+
+for (const token of tokens) {
+  const value = await question(`Enter value for token ${token}: `);
+  const save = await question('Save as global variable? (y/n): ');
+  if (save === 'y') {
+    state.globalVariables[token] = value;
+  } else {
+    map[token] = value;
+  }
+}
+
+await replaceTokens({ ...state.globalVariables, ...map }, false);
 
 rl.close();
