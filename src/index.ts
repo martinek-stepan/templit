@@ -1,51 +1,54 @@
-import { createInterface } from "node:readline";
-import { addRemote, getRemotes, getStatus } from "./git";
+import { createInterface } from 'node:readline';
+import { addRemote, getRemotes, getStatus, fetchAndMergeBranch } from './git';
 
 type State = {
-	globalVariables: Record<string, string>;
+  globalVariables: Record<string, string>;
 };
 
 const rl = createInterface({
-	input: process.stdin,
-	output: process.stdout,
+  input: process.stdin,
+  output: process.stdout,
 });
 
-const question = (questionText: string) =>
-	new Promise<string>((resolve) => rl.question(questionText, resolve));
+const question = (questionText: string) => new Promise<string>((resolve) => rl.question(questionText, resolve));
 
 const { untracked, modified } = await getStatus();
 
 if (modified) {
-	console.log(
-		"You have modified files, please commit or stash them before continuing.",
-	);
-	rl.close();
-	process.exit(0);
+  console.log('You have modified files, please commit or stash them before continuing.');
+  rl.close();
+  process.exit(0);
 }
 
 if (untracked) {
-	const answer = await question(
-		"You have untracked files, it is recommended commit or stash them before continuing. Do you want to progress anyway? (y/n)",
-	);
-	if (answer !== "y") {
-		rl.close();
-		process.exit(0);
-	}
+  const answer = await question('You have untracked files, it is recommended commit or stash them before continuing. Do you want to progress anyway? (y/n)');
+  if (answer !== 'y') {
+    rl.close();
+    process.exit(0);
+  }
 }
 
-const uri = await question("Enter template uri: ");
+const uri = await question('Enter template uri: ');
 
-const [remote, branch] = uri.split("#");
+const [remote, branch] = uri.split('#');
 
 if (!remote || !branch) {
-	throw new Error("Invalid uri, please provide format <remote>#<branch>");
+  throw new Error('Invalid uri, please provide format <remote>#<branch>');
 }
 
 const remotes = await getRemotes();
 
 if (!remotes.find((r) => r.url === remote)) {
-	const shortname = await question("Enter shortname for remote: ");
-	addRemote(shortname, remote);
+  const shortname = await question('Enter shortname for remote: ');
+  addRemote(shortname, remote);
+}
+
+try {
+  await fetchAndMergeBranch(remote, branch);
+} catch (error) {
+  console.log('The merge was not successful, please resolve the conflicts (& make commit), before continuing.');
+  console.log(error.message);
+  await question('Press any key to continue...');
 }
 
 rl.close();
