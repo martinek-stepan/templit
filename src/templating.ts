@@ -2,25 +2,47 @@ import { readFile, writeFile, rename } from "node:fs/promises";
 import * as path from "node:path";
 import * as cases from "@luca/cases";
 import { globIterate } from "glob";
+import { existsSync } from "node:fs";
 
-export const replaceTokens = async (
-	tokensMap: Record<string, string>,
+type ReplacerFn = (match: string, ...groups: string[]) => string;
+
+const replacementRegex =
+	/{{(?<variable>[\w\- \\\/]+)(?::(?<case>[a-zA-Z]+))?}}/g;
+
+type ReplaceVariablesRequiredArgs = {
+	variablesMap: Record<string, string>;
+	isDryRun: boolean;
+	repoRoot: string;
+};
+
+type ReplaceContentVariablesRequiredArgs = {
+	contentVariablesMap: Record<string, string>;
+	isDryRun: boolean;
+};
+
+type ReplaceVariablesDefaultArgs = {
+	includedExtension: string[];
+	includedFiles: string[];
+	ignoredPaths: string[];
+};
+
+type ReplaceVariablesArgs = ReplaceVariablesRequiredArgs &
+	Partial<ReplaceVariablesDefaultArgs>;
+
+const createReplacer = (
+	variables: Set<string>,
+	variablesMap: Record<string, string>,
 	isDryRun: boolean,
-	includedExtension: string[] = ["ts", "json", "yaml", "yml", "md"],
-	includedFiles: string[] = ["Dockerfile"],
-	ignoredPaths: string[] = ["**/dist/**", "**/bin/**", "**/node_modules/**"],
-): Promise<Set<string>> => {
-	const tokens = new Set<string>();
+): ReplacerFn => {
+	return (match: string, ...groups: string[]): string => {
+		const [variable, caseType] = groups;
 
-	const replacer = (match: string, ...groups: string[]): string => {
-		const [token, caseType] = groups;
-
-		let replacement = tokensMap[token];
+		let replacement = variablesMap[variable];
 
 		if (!replacement) {
-			tokens.add(token);
+			variables.add(variable);
 			if (!isDryRun) {
-				throw new Error(`Token ${token} not found in config`);
+				throw new Error(`Variable ${variable} not found in config`);
 			}
 		}
 
@@ -33,7 +55,11 @@ export const replaceTokens = async (
 					return match;
 				}
 
-				throw new Error(`Case type ${caseType} not supported`);
+				throw new Error(
+					`Case type ${caseType} not supported. Supported cases: ${Object.keys(
+						cases,
+					).join(", ")}`,
+				);
 			}
 
 			if (!isDryRun) {
@@ -43,24 +69,39 @@ export const replaceTokens = async (
 
 		return isDryRun ? match : replacement;
 	};
+};
+
+const replaceInContent = async ({
+	variablesMap,
+	isDryRun,
+	includedExtension,
+	includedFiles,
+	ignoredPaths,
+	repoRoot,
+}: ReplaceVariablesRequiredArgs & ReplaceVariablesDefaultArgs): Promise<
+	Set<string>
+> => {
+	const contentVariables = new Set<string>();
 
 	// Define the glob pattern
-	const pattern = `./**/*.{${includedExtension.join(",")}}`;
-	const patternDocker = `./**/{${includedFiles.join(",")}}`;
+	const patternExtensions = `${repoRoot}/**/*.{${includedExtension.join(",")}}`;
+	const patternFiles = `${repoRoot}/**/{${includedFiles.join(",")}}`;
 
 	// Use the glob function to get all matching files
-	const asyncIterator = globIterate([pattern, patternDocker], {
+	const asyncIterator = globIterate([patternExtensions, patternFiles], {
 		ignore: ignoredPaths,
 		nodir: true,
 	});
 
 	const errors: string[] = [];
 
+	const replacer = createReplacer(contentVariables, variablesMap, isDryRun);
+
 	for await (const file of asyncIterator) {
 		try {
 			const content = await readFile(file, "utf8");
 			const replaced = content.replace(
-				/{{(?<token>[\w\- \\\/]+)(?::(?<case>[a-zA-Z]+))?}}/g,
+				replacementRegex,
 				replacer,
 			);
 
@@ -72,11 +113,45 @@ export const replaceTokens = async (
 		}
 	}
 
-	const patternDirs = "./**/*{{*}}*/";
+	if (errors.length > 0) {
+		throw new Error(`Errors occurred while replacing variables in content of the following files:
+${errors.join("\n")}`);
+	}
+
+	return contentVariables;
+};
+
+export const checkForPathVariables = (changes: string): Set<string> => {
+	
+	const variables = new Set<string>();
+	const replacer = createReplacer(variables, {}, true);
+	changes.replace(
+		replacementRegex,
+		replacer,
+	);
+	
+	return variables;
+
+}
+
+const replaceInPaths = async ({
+	variablesMap,
+	isDryRun,
+	ignoredPaths,
+	repoRoot,
+}: Pick<
+	ReplaceVariablesRequiredArgs & ReplaceVariablesDefaultArgs,
+	"variablesMap" | "isDryRun" | "ignoredPaths" | "repoRoot"
+>): Promise<Set<string>> => {
+	const pathVariables = new Set<string>();
+
+	const patternDirs = `${repoRoot}/**/*{{*}}*/`;
 	const asyncDirIterator = globIterate(patternDirs, {
-		ignore: ["**/dist/**", "**/bin/**", "**/node_modules/**"],
+		ignore: ignoredPaths,
 		nobrace: true,
 	});
+
+	const errors: string[] = [];
 
 	const paths: string[][] = [];
 	for await (const file of asyncDirIterator) {
@@ -87,13 +162,16 @@ export const replaceTokens = async (
 	for (const segments of paths) {
 		const last = segments.pop() as string;
 		const templated = last.replace(
-			/{{(?<token>[\w\- \\\/]+)(?::(?<case>[a-zA-Z]+))?}}/g,
-			replacer,
+			replacementRegex,
+			createReplacer(pathVariables, variablesMap, isDryRun),
 		);
 		const oldPath = path.resolve(...segments, last);
 		const newPath = path.resolve(...segments, templated);
 		try {
 			if (!isDryRun) {
+				if (existsSync(newPath)) {
+					throw new Error(`Can not rename path "${oldPath}" to "${newPath}", new path already exists!`);
+				}
 				await rename(oldPath, newPath);
 			}
 		} catch (error) {
@@ -102,9 +180,36 @@ export const replaceTokens = async (
 	}
 
 	if (errors.length > 0) {
-		throw new Error(`Errors occurred while processing the following files:
+		throw new Error(`Errors occurred while replacing variables in name of the following files:
 ${errors.join("\n")}`);
 	}
 
-	return tokens;
+	return pathVariables;
+};
+
+export const replaceVariables = async ({
+	contentVariablesMap,
+	//pathVariablesMap,
+	isDryRun,
+	repoRoot,
+	includedExtension = ["ts", "json", "yaml", "yml", "md"],
+	includedFiles = ["Dockerfile"],
+	ignoredPaths = ["**/dist/**", "**/bin/**", "**/node_modules/**"],
+}: ReplaceContentVariablesRequiredArgs &
+	Omit<ReplaceVariablesArgs,"variablesMap">): Promise<{
+	contentVariables: Set<string>;
+}> => {
+	// Add templit readmes & config to ignored paths
+	ignoredPaths.push("**/**.templit.md");
+	ignoredPaths.push("**/templit.json");
+
+	const contentVariables = await replaceInContent({
+		variablesMap: contentVariablesMap,
+		isDryRun,
+		repoRoot,
+		includedExtension,
+		includedFiles,
+		ignoredPaths,
+	});
+	return { contentVariables };
 };

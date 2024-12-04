@@ -5,7 +5,10 @@ const execPromise = promisify(exec);
 
 export const execCommand = async (command: string): Promise<string> => {
 	try {
-		const { stdout } = await execPromise(command);
+		const { stdout, stderr } = await execPromise(command);
+		if (stderr.length > 0) {
+			console.error(stderr);
+		}
 		return stdout;
 	} catch (error) {
 		throw new Error(`Error running command '${command}': ${error.stderr}`);
@@ -75,5 +78,23 @@ export const fetchAndMergeBranch = async (
 	branch: string,
 ): Promise<void> => {
 	await execCommand(`git fetch ${remote} ${branch}`);
-	await execCommand(`git merge ${remote}/${branch}`);
+	await execCommand(`git merge --allow-unrelated-histories ${remote}/${branch}`);
 };
+
+export const commitChanges = async (message: string): Promise<void> => {
+	await execCommand("git add .");
+	await execCommand(`git commit -m "${message}"`);
+};
+
+export const getRepoRoot = async (): Promise<string> => {
+	const res = await execCommand("git rev-parse --show-toplevel");
+	return res.trim();
+}
+
+export const createNewBranch = async (branchName: string): Promise<void> => {
+	await execCommand(`git checkout -b ${branchName}`);
+}
+
+export const getChangedFiles = async (): Promise<string> => {
+	return await execCommand("git diff --name-only HEAD HEAD~1");
+}

@@ -1,16 +1,21 @@
 import { createInterface } from "node:readline";
-import { addRemote, getRemotes, getStatus, fetchAndMergeBranch } from "./git";
-import { replaceTokens } from "./templating";
-import * as path from "node:path";
-import { globIterate } from "glob";
-
-type State = {
-	globalVariables: Record<string, string>;
-};
+import {
+	addRemote,
+	getRemotes,
+	getStatus,
+	fetchAndMergeBranch,
+	commitChanges,
+	getRepoRoot,
+	createNewBranch,
+	getChangedFiles,
+} from "./git";
+import { checkForPathVariables, replaceVariables } from "./templating";
+import { determineVariable, generateRandomSequence, State } from "./helpers";
 
 const state: State = {
 	globalVariables: {},
 };
+
 
 const rl = createInterface({
 	input: process.stdin,
@@ -39,23 +44,27 @@ if (untracked) {
 	}
 }
 
-const uri = await question("Enter template uri: ");
+let branchName = `templit/new-${generateRandomSequence(6)}`;
+const selectedName = await question(`Enter branch name for new template: [${branchName}] `);
 
-const [remote, branch] = uri.split("#");
+branchName = selectedName || branchName;
 
-if (!remote || !branch) {
-	throw new Error("Invalid uri, please provide format <remote>#<branch>");
-}
+await createNewBranch(branchName);
+
+const shortname = await question("Enter template repository name (if it's already between remotes) name: ");
 
 const remotes = await getRemotes();
+let url = remotes.find((r) => r.name === shortname)?.url;
 
-if (!remotes.find((r) => r.url === remote)) {
-	const shortname = await question("Enter shortname for remote: ");
-	addRemote(shortname, remote);
+if (!url) {
+	url = await question("Enter url for remote: ");
+	addRemote(shortname, url);
 }
 
+const branch = await question("Enter name of branch containing template: ");
+
 try {
-	await fetchAndMergeBranch(remote, branch);
+	await fetchAndMergeBranch(shortname, branch);
 } catch (error) {
 	console.log(
 		"The merge was not successful, please resolve the conflicts (& make commit), before continuing.",
@@ -66,22 +75,44 @@ try {
 
 console.log("Template successfully merged!");
 
-const tokens = await replaceTokens(state.globalVariables, true);
+const repoRoot = await getRepoRoot();
 
-const map: Record<string, string> = {};
+const { contentVariables } = await replaceVariables({
+	contentVariablesMap: {},
+	isDryRun: true,
+	repoRoot
+});
 
-console.log("Please enter values for missing tokens.");
+const filesChanges = await getChangedFiles();
 
-for (const token of tokens) {
-	const value = await question(`Enter value for token ${token}: `);
-	const save = await question("Save as global variable? (y/n): ");
-	if (save === "y") {
-		state.globalVariables[token] = value;
-	} else {
-		map[token] = value;
-	}
+const pathVariables = checkForPathVariables(filesChanges);
+
+
+const variablesMap: Record<string, string> = {};
+const allVariables = new Set([...contentVariables, ...pathVariables]);
+for (const name of allVariables) {
+	variablesMap[name] = await determineVariable(
+		name,
+		pathVariables.has(name),
+		question,
+		state
+	);
 }
 
-await replaceTokens({ ...state.globalVariables, ...map }, false);
+
+if (contentVariables.size > 0) {
+	await replaceVariables({
+		contentVariablesMap: variablesMap,
+		isDryRun: false,
+		repoRoot
+	});
+
+
+	// TODO sync state to fs & commit
+}
+if (contentVariables.size > 0 || pathVariables.size > 0) {
+	
+	await commitChanges("Replaced variables in template");
+}
 
 rl.close();
