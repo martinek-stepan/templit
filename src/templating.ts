@@ -6,7 +6,7 @@ import { existsSync } from "node:fs";
 
 type ReplacerFn = (match: string, ...groups: string[]) => string;
 
-const replacementRegex =
+export const replacementRegex =
 	/{{(?<variable>[\w\- \\\/]+)(?::(?<case>[a-zA-Z]+))?}}/g;
 
 type ReplaceVariablesRequiredArgs = {
@@ -29,7 +29,7 @@ type ReplaceVariablesDefaultArgs = {
 type ReplaceVariablesArgs = ReplaceVariablesRequiredArgs &
 	Partial<ReplaceVariablesDefaultArgs>;
 
-const createReplacer = (
+export const createReplacer = (
 	variables: Set<string>,
 	variablesMap: Record<string, string>,
 	isDryRun: boolean,

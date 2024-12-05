@@ -9,8 +9,11 @@ import {
 	createNewBranch,
 	getChangedFiles,
 } from "./git";
-import { checkForPathVariables, replaceVariables } from "./templating";
+import { checkForPathVariables, createReplacer, replacementRegex, replaceVariables } from "./templating";
 import { determineVariable, generateRandomSequence, State } from "./helpers";
+import { resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { rename } from "node:fs/promises";
 
 const state: State = {
 	globalVariables: {},
@@ -84,9 +87,7 @@ const { contentVariables } = await replaceVariables({
 });
 
 const filesChanges = await getChangedFiles();
-
 const pathVariables = checkForPathVariables(filesChanges);
-
 
 const variablesMap: Record<string, string> = {};
 const allVariables = new Set([...contentVariables, ...pathVariables]);
@@ -99,20 +100,39 @@ for (const name of allVariables) {
 	);
 }
 
-
 if (contentVariables.size > 0) {
 	await replaceVariables({
 		contentVariablesMap: variablesMap,
 		isDryRun: false,
 		repoRoot
 	});
-
-
-	// TODO sync state to fs & commit
 }
+
+const replacer = createReplacer(pathVariables, variablesMap, false);
+for (const file of filesChanges.split("\n")) {	
+	const replaced = file.replace(
+		replacementRegex,
+		replacer,
+	);
+
+	if (file !== replaced) {
+		const oldPath = resolve(repoRoot, file);
+		const newPath = resolve(repoRoot, replaced);
+		if ('y' === await question(`Do you want to rename/move file '${oldPath}' to '${newPath}' [y/N]': `))
+		{				
+			if (existsSync(newPath)) {
+				throw new Error(`Can not rename/move file "${oldPath}" to "${newPath}", new path already exists!`);
+			}
+			
+			await rename(oldPath, newPath);
+		}
+	}
+}
+
 if (contentVariables.size > 0 || pathVariables.size > 0) {
 	
 	await commitChanges("Replaced variables in template");
 }
 
+	// TODO sync state to fs & commit
 rl.close();
