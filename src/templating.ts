@@ -1,8 +1,6 @@
-import { readFile, writeFile, rename } from "node:fs/promises";
-import * as path from "node:path";
-import * as cases from "@luca/cases";
+import { readFile, writeFile } from "node:fs/promises";
+import { cases } from "./cases/cases.js";
 import { globIterate } from "glob";
-import { existsSync } from "node:fs";
 
 type ReplacerFn = (match: string, ...groups: string[]) => string;
 
@@ -37,6 +35,10 @@ export const createReplacer = (
 	return (match: string, ...groups: string[]): string => {
 		const [variable, caseType] = groups;
 
+    if (!variable) {
+      throw new Error(`Variable not found in ${groups}`);
+    }
+
 		let replacement = variablesMap[variable];
 
 		if (!replacement) {
@@ -47,9 +49,10 @@ export const createReplacer = (
 		}
 
 		if (caseType) {
+      // @ts-expect-error
 			const replacementFn = cases[caseType];
 
-			if (!replacementFn) {
+			if (!replacementFn || caseType === 'splitPieces') {
 				if (isDryRun) {
 					console.error(`Case type ${caseType} in ${match} not supported!`);
 					return match;
@@ -67,7 +70,15 @@ export const createReplacer = (
 			}
 		}
 
-		return isDryRun ? match : replacement;
+    if (isDryRun) {
+      return match;
+    }
+
+    if (replacement) {
+      return replacement;
+    }
+
+		throw new Error(`Replacement not found for ${variable}`);
 	};
 };
 
@@ -108,7 +119,8 @@ const replaceInContent = async ({
 			if (!isDryRun) {
 				await writeFile(file, replaced, "utf8");
 			}
-		} catch (error) {
+		// biome-ignore lint/suspicious/noExplicitAny: <explanation>
+}  catch (error: any) {
 			errors.push(`${file}: ${error.message}`);
 		}
 	}
@@ -133,59 +145,6 @@ export const checkForPathVariables = (changes: string): Set<string> => {
 	return variables;
 
 }
-
-const replaceInPaths = async ({
-	variablesMap,
-	isDryRun,
-	ignoredPaths,
-	repoRoot,
-}: Pick<
-	ReplaceVariablesRequiredArgs & ReplaceVariablesDefaultArgs,
-	"variablesMap" | "isDryRun" | "ignoredPaths" | "repoRoot"
->): Promise<Set<string>> => {
-	const pathVariables = new Set<string>();
-
-	const patternDirs = `${repoRoot}/**/*{{*}}*/`;
-	const asyncDirIterator = globIterate(patternDirs, {
-		ignore: ignoredPaths,
-		nobrace: true,
-	});
-
-	const errors: string[] = [];
-
-	const paths: string[][] = [];
-	for await (const file of asyncDirIterator) {
-		paths.push(file.split(path.sep));
-	}
-
-	paths.sort((a, b) => b.length - a.length);
-	for (const segments of paths) {
-		const last = segments.pop() as string;
-		const templated = last.replace(
-			replacementRegex,
-			createReplacer(pathVariables, variablesMap, isDryRun),
-		);
-		const oldPath = path.resolve(...segments, last);
-		const newPath = path.resolve(...segments, templated);
-		try {
-			if (!isDryRun) {
-				if (existsSync(newPath)) {
-					throw new Error(`Can not rename path "${oldPath}" to "${newPath}", new path already exists!`);
-				}
-				await rename(oldPath, newPath);
-			}
-		} catch (error) {
-			errors.push(`${oldPath} -> ${newPath}: ${error.message}`);
-		}
-	}
-
-	if (errors.length > 0) {
-		throw new Error(`Errors occurred while replacing variables in name of the following files:
-${errors.join("\n")}`);
-	}
-
-	return pathVariables;
-};
 
 export const replaceVariables = async ({
 	contentVariablesMap,

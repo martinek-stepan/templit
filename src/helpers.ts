@@ -1,4 +1,8 @@
+import { existsSync } from "node:fs";
+import { readFile, readdir, unlink, writeFile } from "node:fs/promises";
 import { platform } from "node:os";
+import { resolve } from "node:path";
+import { addUntrackedFile, getRepoRoot } from "./git.js";
 
 const getIllegalFilenameCharsRegex = (): RegExp => {
 	const plat = platform();
@@ -7,7 +11,7 @@ const getIllegalFilenameCharsRegex = (): RegExp => {
 		return /[\\/:*?"<>|]|^\.\.?$|[ ]$|[.]$/;
 	}
 	if (plat === "darwin") {
-		// macOS illegal characters: : and reserved names . and ..
+		// macOS illegal characters: : / and reserved names . and ..
 		return /[:\/]|^\.\.?$/;
 	}
 
@@ -17,8 +21,44 @@ const getIllegalFilenameCharsRegex = (): RegExp => {
 
 const illegalCharsRegex = getIllegalFilenameCharsRegex();
 
-export type State = {
+export type Config = {
 	globalVariables: Record<string, string>;
+  autoAcceptPathChanges: boolean;
+  autoAcceptGlobalVariables: boolean;
+  dontAskToSaveGlobalVariables: boolean;
+  noUntrackedFiles: boolean;
+  defaultTemplateRepository: {
+    url:string;
+    name: string
+  };
+};
+
+
+export type Steps = 'init' |
+    'branchCreated' |
+    'remoteAdded' |
+    'branchMerged' |
+    'branchMergeResolved' |
+    'contentVariablesGathered' |
+    'pathVariablesGathered' |
+    'variablesDetermined' |
+    'contentVariablesReplaced'|
+    'pathVariablesReplaced'|
+    'changesCommited' |
+    'branchMerged';
+
+export type State = {
+  originalBranch?: string;
+  newBranch?: string;
+  templateRepository?: {
+    url: string;
+    name: string;
+  };
+  templateBranch?: string;
+  pathVariables: string[];
+  contentVariables: string[];
+  variables: Record<string, string>;
+  step: Steps;
 };
 
 
@@ -26,16 +66,16 @@ export const determineVariable = async (
 	name: string,
   isPathVariable: boolean,
   question: (question: string) => Promise<string>,
-  state: State,
+  config: Config,
 ): Promise<string> => {
 	let value: string | undefined;
 
-	if (state.globalVariables[name]) {
-		const response = await question(
-			`Global variable is defined for token ${name} with value '${state.globalVariables[name]}' do you want to use it? [y/N]: `,
+	if (config.globalVariables[name]) {
+		const response = config.autoAcceptGlobalVariables  ? 'y' : await question(
+			`Global variable is defined for token ${name} with value '${config.globalVariables[name]}' do you want to use it? [Y/n]: `,
 		);
-		if (response === "y") {
-			value = state.globalVariables[name];
+		if (!['n','N'].includes(response)) {
+			value = config.globalVariables[name];
 		}
 	}
 
@@ -54,9 +94,9 @@ export const determineVariable = async (
 		}
 	} while (!value);
 
-	if (state.globalVariables[name] !== value) {
+	if (!config.dontAskToSaveGlobalVariables && config.globalVariables[name] !== value) {
 		if ('y' === await question(`Save as global varianble [yN]': `)) {
-			state.globalVariables[name] = value;
+			await updateConfig({globalVariables: {...config.globalVariables, [name]: value}});
 		}
 	}
 	return value;
@@ -71,3 +111,85 @@ export const generateRandomSequence = (length: number): string => {
     }
     return result;
 }
+
+let state: State = {
+  step: 'init',
+  pathVariables: [],
+  contentVariables: [],
+  variables: {},
+  templateRepository: {
+    name: '',
+    url: ''
+  }
+};
+
+
+export const loadState = async (): Promise<Readonly<State>> => {
+  const repoRoot = await getRepoRoot();
+  const statePath = resolve(repoRoot,'.templit.state.json');
+
+  if (existsSync(statePath)) {
+    const file = await readFile(statePath, 'utf-8');
+    state = JSON.parse(file) as State;
+  }
+
+  return state;
+}
+
+export const updateState = async (stateUpdate: Partial<State>): Promise<Readonly<State>> => {
+
+  const repoRoot = await getRepoRoot();
+  const statePath = resolve(repoRoot,'.templit.state.json');
+
+  state = {...state, ...stateUpdate};
+
+  await writeFile(statePath, JSON.stringify(state, null, 2));
+  return state;
+}
+
+export const removeStateFile = async (): Promise<void> => {
+  await unlink(resolve(await getRepoRoot(), '.templit.state.json'));
+}
+
+let config: Config = {
+  autoAcceptGlobalVariables: false,
+  autoAcceptPathChanges: false,
+  dontAskToSaveGlobalVariables: false,
+  globalVariables: {},
+  noUntrackedFiles: false,
+  defaultTemplateRepository: {
+    name: '',
+    url: ''
+  }
+}
+
+export const loadConfig = async (): Promise<Readonly<Config>> => {
+
+  const repoRoot = await getRepoRoot();
+  const path = resolve(repoRoot,'.templit.config.json');
+
+  if (existsSync(path)) {
+
+    const file = await readFile(path, 'utf-8');
+    config = JSON.parse(file) as Config;
+  }
+
+  return config;
+}
+
+export const updateConfig = async (configUpdate: Partial<Config>): Promise<Readonly<Config>> => {
+
+  const repoRoot = await getRepoRoot();
+  const path = resolve(repoRoot,'.templit.config.json');
+
+  config = {...config, ...configUpdate};
+
+  await writeFile(path, JSON.stringify(config, null, 2));
+  await addUntrackedFile(path);
+  return config;
+}
+
+export const isDirectoryEmpty = async (path: string): Promise<boolean> => {
+    const files = await readdir(path);
+    return files.length === 0;
+};
