@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { readFile, readdir, unlink, writeFile } from "node:fs/promises";
 import { platform } from "node:os";
 import { resolve } from "node:path";
-import { addUntrackedFile, getRepoRoot } from "./git.js";
+import { getRepoRoot } from "./git.js";
 
 const getIllegalFilenameCharsRegex = (): RegExp => {
 	const plat = platform();
@@ -39,6 +39,7 @@ export type Steps = 'init' |
     'remoteAdded' |
     'branchMerged' |
     'branchMergeResolved' |
+    'branchCherryPicked'|
     'contentVariablesGathered' |
     'pathVariablesGathered' |
     'variablesDetermined' |
@@ -185,7 +186,6 @@ export const updateConfig = async (configUpdate: Partial<Config>): Promise<Reado
   config = {...config, ...configUpdate};
 
   await writeFile(path, JSON.stringify(config, null, 2));
-  await addUntrackedFile(path);
   return config;
 }
 

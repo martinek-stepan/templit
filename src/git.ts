@@ -85,20 +85,31 @@ export const getStatus = async (): Promise<{
 	return { modified, untracked };
 };
 
-export const fetchAndCherryPickBranch = async (
-	remote: string|undefined,
-	branch: string,
+export const cherryPickBranch = async (
+	originalBranch: string|undefined,
+	branch: string|undefined,
 ): Promise<void> => {
-  if (!remote) {
-    throw new Error("Remote must be provided");
+  if (!branch || !originalBranch) {
+    throw new Error("All parameters are required!");
   }
   
-	await execCommand(`git fetch ${remote} ${branch}`);
-  await execCommand(`git rev-list --reverse ${remote}/${branch} | git cherry-pick --allow-empty -n --stdin`);
+  await execCommand(`git checkout ${originalBranch}`);
+	await execCommand(`git cherry-pick -m 1 ${branch}`);
+  await execCommand(`git branch -D ${branch}`);
+};
+
+export const mergeBranch = async (
+	remote?: string,
+	branch?: string,
+): Promise<void> => {
+	if (!remote || !branch) {
+		throw new Error("Remote and branch must be provided");
+	}
+	await execCommand(`git merge --allow-unrelated-histories ${remote}/${branch}`);
 };
 
 export const commitChanges = async (message: string): Promise<void> => {
-	await execCommand("git add .");
+	await execCommand("git add -- . :!**/.templit.state.json");
 	await execCommand(`git commit -m "${message}"`);
 };
 
@@ -128,11 +139,3 @@ export const mergeBack = async (currentBranch: string|undefined, targetBranch: s
   await execCommand(`git checkout ${targetBranch}`);
   await execCommand(`git merge ${currentBranch}`);
 };
-
-export const addUntrackedFile = async (file: string): Promise<void> => {
-  await execCommand(`git add ${file}`);
-}
-
-export const removeBranch = async (branch: string|undefined): Promise<void> => {
-  await execCommand(`git branch -d ${branch}`);
-}

@@ -1,7 +1,7 @@
 {
-	"name": "temptit",
-	"version": "0.0.1",
-	"description": "Templating tool based on github repositories",
+	"name": "@klexik/templit",
+	"version": "0.0.2",
+	"description": "Templating tool based on git repositories",
 	"author": "Stepan Martinek",
 	"repository": {
 		"type": "git",

@@ -5,17 +5,16 @@ import { dirname, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import {
 	addRemote,
+	cherryPickBranch,
 	commitChanges,
 	createNewBranch,
-	fetchAndCherryPickBranch,
 	getChangedFiles,
 	getCurrentBranchName,
 	getRemotes,
 	getRepoRoot,
 	getStatus,
   isGitRepository,
-  mergeBack,
-  removeBranch,
+  mergeBranch,
 } from "./git.js";
 import { type Config, type State, determineVariable, generateRandomSequence, isDirectoryEmpty, loadConfig, loadState, removeStateFile, updateState } from "./helpers.js";
 import { checkForPathVariables, createReplacer, replaceVariables, replacementRegex } from "./templating.js";
@@ -70,9 +69,6 @@ try
 
     state = await updateState({originalBranch: await getCurrentBranchName()});
     let branchName = `templit/new-${generateRandomSequence(6)}`;
-    const selectedName = await question(`Enter branch name for new template: [${branchName}] `);
-
-    branchName = selectedName || branchName;
 
     await createNewBranch(branchName);
 
@@ -80,13 +76,13 @@ try
   }
 
   if (state.step === 'branchCreated') {
-    const shortname = config.defaultTemplateRepository.name ?? await question("Enter remote name for template repository: ");
+    const shortname = config.defaultTemplateRepository.name || await question("Enter remote name for template repository: ");
 
     const remotes = await getRemotes();
     let url = remotes.find((r) => r.name === shortname)?.url;
 
     if (!url) {
-      url = config.defaultTemplateRepository.name ?? await question("Enter url for remote: ");
+      url = config.defaultTemplateRepository.name || await question("Enter url for remote: ");
       addRemote(shortname, url);
     }
 
@@ -101,15 +97,13 @@ try
     const branch = await question("Enter name of branch containing template: ");
 
     try {
-      await fetchAndCherryPickBranch(state.templateRepository?.name, branch);
-      await commitChanges(`Cherry picked template ${branch}`);
-    // biome-ignore lint/suspicious/noExplicitAny: <explanation>
+      await mergeBranch(state.templateRepository?.name, branch);
     }  catch (error: any) {
       console.log(error?.message);
       mergeSuccessful = false;
     }
 
-    console.log("Template successfully cherry-picket!");
+    console.log("Template successfully merged into new branch");
 
     state = await updateState({templateBranch: branch, step: 'branchMerged'});
   }
@@ -126,6 +120,12 @@ try
   }
 
   if (state.step === 'branchMergeResolved') {
+    await cherryPickBranch(state.originalBranch, state.newBranch);
+
+    state = await updateState({step: 'branchCherryPicked'});
+  }
+
+  if (state.step === 'branchCherryPicked') {
 
     const { contentVariables } = await replaceVariables({
       contentVariablesMap: {},
@@ -213,18 +213,9 @@ try
     state = await updateState({step: 'changesCommited'});
   }
 
-  if (state.step === 'changesCommited'){
-
-    const text = `Adding template into your repository is now complete in branch '${state.newBranch}'.
-State file will be now removed, whenever you will chose to let templit merge the changes back to the original branch, or do it manually (if you want to squash/rebase or whatever) to prevent conflicts.
-Do you want templit to merge the changes back to the original branch (${state.originalBranch})? [Y/n]:`;
-
-    const answer = await question(text);
-
-    await removeStateFile()
-    if (!['n','N'].includes(answer)) {
-      await mergeBack(state.newBranch, state.originalBranch);
-      await removeBranch(state.newBranch);
+  if (state.step === 'changesCommited') {
+    if (await question('Done, do you want to remove state file? [Y/n]: ') !== 'n') {
+      await removeStateFile();
     }
   }
 }
