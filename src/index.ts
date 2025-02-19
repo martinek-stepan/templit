@@ -18,7 +18,7 @@ import {
 } from "./git.js";
 import { type Config, type State, determineVariable, generateRandomSequence, isDirectoryEmpty, loadConfig, loadState, removeStateFile, updateState } from "./helpers.js";
 import { checkForPathVariables, createReplacer, replaceVariables, replacementRegex } from "./templating.js";
-
+import { glob } from "glob";
 
 const gitGut = await isGitRepository();
 if (!gitGut) {
@@ -130,7 +130,10 @@ try
     const { contentVariables } = await replaceVariables({
       contentVariablesMap: {},
       isDryRun: true,
-      repoRoot
+      repoRoot,
+      includedExtension: config.includedExtension,
+      includedFiles: config.includedFiles,
+      ignoredPaths: config.ignoredPaths
     });
     state = await updateState({step: 'contentVariablesGathered', contentVariables: [...contentVariables]});
 
@@ -164,7 +167,10 @@ try
       await replaceVariables({
         contentVariablesMap: state.variables,
         isDryRun: false,
-        repoRoot
+        repoRoot,
+        includedExtension: config.includedExtension,
+        includedFiles: config.includedFiles,
+        ignoredPaths: config.ignoredPaths
       });
     }
     state = await updateState({step: 'contentVariablesReplaced'});
@@ -216,6 +222,32 @@ try
   if (state.step === 'changesCommited') {
     if (await question('Done, do you want to remove state file? [Y/n]: ') !== 'n') {
       await removeStateFile();
+    }
+  }
+
+	// Use the glob function to get all matching files
+	const partials = await glob([`${repoRoot}/**/*.partial.*`], {
+		ignore: config.ignoredPaths,
+		nodir: true,
+  });
+  
+  if (partials.length > 0) {
+    console.log('There are partial files you should merge manually:');
+    for await (const file of partials) {
+      console.log(file);
+    }
+  }
+
+	// Use the glob function to get all matching files
+	const readmes = await glob([`${repoRoot}/**/*.templit.md`], {
+		ignore: config.ignoredPaths,
+		nodir: true,
+  });
+  
+  if (readmes.length > 0) {
+    console.log('There are readme files you should follow:');
+    for await (const file of readmes) {
+      console.log(file);
     }
   }
 }

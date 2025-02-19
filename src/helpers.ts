@@ -22,15 +22,18 @@ const getIllegalFilenameCharsRegex = (): RegExp => {
 const illegalCharsRegex = getIllegalFilenameCharsRegex();
 
 export type Config = {
-	globalVariables: Record<string, string>;
+  globalVariables: Record<string, string>;
   autoAcceptPathChanges: boolean;
   autoAcceptGlobalVariables: boolean;
   dontAskToSaveGlobalVariables: boolean;
   noUntrackedFiles: boolean;
   defaultTemplateRepository: {
-    url:string;
+    url: string;
     name: string
   };
+  includedExtension: string[];
+	includedFiles: string[];
+	ignoredPaths: string[];
 };
 
 
@@ -161,7 +164,10 @@ let config: Config = {
   defaultTemplateRepository: {
     name: '',
     url: ''
-  }
+  },
+	includedExtension: ["ts", "json", "yaml", "yml", "md"],
+	includedFiles: ["Dockerfile"],
+	ignoredPaths: ["**/dist/**", "**/bin/**", "**/node_modules/**"],
 }
 
 export const loadConfig = async (): Promise<Readonly<Config>> => {

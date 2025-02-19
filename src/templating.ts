@@ -25,7 +25,7 @@ type ReplaceVariablesDefaultArgs = {
 };
 
 type ReplaceVariablesArgs = ReplaceVariablesRequiredArgs &
-	Partial<ReplaceVariablesDefaultArgs>;
+	ReplaceVariablesDefaultArgs;
 
 export const createReplacer = (
 	variables: Set<string>,
@@ -151,9 +151,9 @@ export const replaceVariables = async ({
 	//pathVariablesMap,
 	isDryRun,
 	repoRoot,
-	includedExtension = ["ts", "json", "yaml", "yml", "md"],
-	includedFiles = ["Dockerfile"],
-	ignoredPaths = ["**/dist/**", "**/bin/**", "**/node_modules/**"],
+	includedExtension,
+	includedFiles,
+	ignoredPaths,
 }: ReplaceContentVariablesRequiredArgs &
 	Omit<ReplaceVariablesArgs,"variablesMap">): Promise<{
 	contentVariables: Set<string>;
